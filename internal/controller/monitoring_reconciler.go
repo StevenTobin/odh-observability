@@ -271,6 +271,7 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 	}
 
 	desiredSet := make(map[resourceKey]struct{}, len(desired))
+	desiredByName := make(map[string]struct{}, len(desired))
 	for i := range desired {
 		obj := &desired[i]
 		desiredSet[resourceKey{
@@ -278,6 +279,7 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 			namespace: obj.GetNamespace(),
 			name:      obj.GetName(),
 		}] = struct{}{}
+		desiredByName[obj.GetNamespace()+"/"+obj.GetName()] = struct{}{}
 	}
 
 	collector := gc.New(
@@ -290,8 +292,18 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 				namespace: obj.GetNamespace(),
 				name:      obj.GetName(),
 			}
-			_, inDesired := desiredSet[k]
-			return !inDesired, nil
+			if _, inDesired := desiredSet[k]; inDesired {
+				return false, nil
+			}
+			// Skip child resources created by operator CRs we deployed
+			// (e.g. target allocator pods from OpenTelemetryCollector,
+			// prometheus pods from MonitoringStack, querier from ThanosQuerier).
+			for _, ref := range obj.GetOwnerReferences() {
+				if _, ownerIsDesired := desiredByName[obj.GetNamespace()+"/"+ref.Name]; ownerIsDesired {
+					return false, nil
+				}
+			}
+			return true, nil
 		}),
 	)
 
