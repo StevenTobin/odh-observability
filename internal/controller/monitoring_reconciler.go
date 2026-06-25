@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -271,7 +272,7 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 	}
 
 	desiredSet := make(map[resourceKey]struct{}, len(desired))
-	desiredByName := make(map[string]struct{}, len(desired))
+	desiredNames := make(map[string]struct{}, len(desired))
 	for i := range desired {
 		obj := &desired[i]
 		desiredSet[resourceKey{
@@ -279,7 +280,7 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 			namespace: obj.GetNamespace(),
 			name:      obj.GetName(),
 		}] = struct{}{}
-		desiredByName[obj.GetNamespace()+"/"+obj.GetName()] = struct{}{}
+		desiredNames[obj.GetName()] = struct{}{}
 	}
 
 	collector := gc.New(
@@ -287,21 +288,34 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 		gc.WithLabel(odhLabels.PlatformPartOf, "monitoring"),
 		gc.InNamespace(monitoring.Spec.Namespace),
 		gc.WithObjectPredicate(func(_ gc.RunParams, obj unstructured.Unstructured) (bool, error) {
-			k := resourceKey{
+			if _, ok := desiredSet[resourceKey{
 				gvk:       obj.GroupVersionKind(),
 				namespace: obj.GetNamespace(),
 				name:      obj.GetName(),
-			}
-			if _, inDesired := desiredSet[k]; inDesired {
+			}]; ok {
 				return false, nil
 			}
-			// Skip child resources created by operator CRs we deployed
-			// (e.g. target allocator pods from OpenTelemetryCollector,
-			// prometheus pods from MonitoringStack, querier from ThanosQuerier).
+			// Skip any resource whose owner chain traces back to a
+			// resource we deployed. Checks both direct ownership and
+			// name-prefix ancestry for multi-level children, e.g.
+			// data-science-collector (OTelCollector) ->
+			//   data-science-collector-targetallocator (Deployment) ->
+			//     data-science-collector-targetallocator-79b47f (ReplicaSet)
 			for _, ref := range obj.GetOwnerReferences() {
-				if _, ownerIsDesired := desiredByName[obj.GetNamespace()+"/"+ref.Name]; ownerIsDesired {
+				if _, ok := desiredNames[ref.Name]; ok {
 					return false, nil
 				}
+				for name := range desiredNames {
+					if strings.HasPrefix(ref.Name, name+"-") {
+						return false, nil
+					}
+				}
+			}
+			// prometheus-web-tls-ca Secret is managed outside the template
+			// pipeline by syncPrometheusWebTLSCA; it may carry a stale
+			// part-of label from earlier code but must not be GC'd.
+			if obj.GetKind() == "Secret" && obj.GetName() == "prometheus-web-tls-ca" {
+				return false, nil
 			}
 			return true, nil
 		}),
