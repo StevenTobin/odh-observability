@@ -62,15 +62,6 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
-              managementState:
-                default: Managed
-                description: |-
-                  ManagementState controls whether the operator actively manages the
-                  component (Managed) or removes it (Removed).
-                enum:
-                - Managed
-                - Removed
-                type: string
               metrics:
                 description: Metrics configures metrics collection via the MonitoringStack
                   operator.

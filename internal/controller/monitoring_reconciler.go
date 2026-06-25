@@ -156,18 +156,6 @@ func (r *MonitoringReconciler) reconcile(ctx context.Context, monitoring *v1alph
 		})
 	}()
 
-	// Handle Removed state.
-	if monitoring.Spec.ManagementState == platformcommon.Removed {
-		log.Info("ManagementState is Removed, deleting all owned resources")
-		if err := r.deleteAllOwned(ctx, monitoring); err != nil {
-			log.Error(err, "Failed to delete owned resources, will retry on next reconcile")
-		}
-		cm.MarkFalse(string(platformcommon.ConditionTypeReady), "Removed", "Monitoring is in Removed state")
-		cm.MarkFalse(string(platformcommon.ConditionTypeProvisioningSucceeded), "Removed", "Monitoring is in Removed state")
-		cm.MarkFalse(string(platformcommon.ConditionTypeDegraded), "NotDegraded", "")
-		return ctrl.Result{}, nil
-	}
-
 	// Check prerequisite operators.
 	if err := checkMonitoringPreconditions(ctx, r.Client, monitoring); err != nil {
 		cm.MarkFalse(conditions.ConditionMonitoringAvailable,
@@ -305,7 +293,7 @@ func (r *MonitoringReconciler) collectGarbage(ctx context.Context, monitoring *v
 	})
 }
 
-// deleteAllOwned removes all resources owned by this controller (used on Removed state).
+// deleteAllOwned removes all resources owned by this controller (used during finalizer cleanup).
 func (r *MonitoringReconciler) deleteAllOwned(ctx context.Context, monitoring *v1alpha1.Monitoring) error {
 	if monitoring.Spec.Namespace == "" {
 		return fmt.Errorf("monitoring.Spec.Namespace is empty, cannot safely delete owned resources")

@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -76,42 +77,8 @@ func newMonitoring(name string) *v1alpha1.Monitoring {
 			Generation: 1,
 		},
 		Spec: v1alpha1.MonitoringSpec{
-			ManagementSpec: platformcommon.ManagementSpec{
-				ManagementState: platformcommon.Managed,
-			},
 			Namespace: "test-ns",
 		},
-	}
-}
-
-// TestReconcile_Removed: Monitoring with Removed state should short-circuit, set
-// Ready=False and ProvisioningSucceeded=False, and not return an error.
-func TestReconcile_Removed(t *testing.T) {
-	s := newTestScheme(t)
-	m := newMonitoring(v1alpha1.MonitoringInstanceName)
-	m.Spec.ManagementState = platformcommon.Removed
-
-	r := newTestReconciler(t, s, fake.NewClientBuilder().WithScheme(s).WithObjects(m).WithStatusSubresource(m).Build())
-
-	_, err := r.reconcile(context.Background(), m)
-	if err != nil {
-		t.Fatalf("reconcile returned error: %v", err)
-	}
-
-	var ready, provisioning string
-	for _, c := range m.Status.Status.Conditions {
-		switch c.Type {
-		case string(platformcommon.ConditionTypeReady):
-			ready = string(c.Status)
-		case string(platformcommon.ConditionTypeProvisioningSucceeded):
-			provisioning = string(c.Status)
-		}
-	}
-	if ready != string(metav1.ConditionFalse) {
-		t.Errorf("Ready: want False, got %q", ready)
-	}
-	if provisioning != string(metav1.ConditionFalse) {
-		t.Errorf("ProvisioningSucceeded: want False, got %q", provisioning)
 	}
 }
 
@@ -167,11 +134,50 @@ func TestReconcile_NothingConfigured(t *testing.T) {
 	s.AddKnownTypeWithName(schema.GroupVersionKind{
 		Group: "operators.coreos.com", Version: "v2", Kind: "OperatorConditionList",
 	}, &unstructured.UnstructuredList{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "cert-manager.io", Version: "v1", Kind: "Issuer",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "cert-manager.io", Version: "v1", Kind: "IssuerList",
+	}, &unstructured.UnstructuredList{})
 
 	m := newMonitoring(v1alpha1.MonitoringInstanceName)
-	// No Metrics/Traces configured: no operator precondition checks triggered.
 
-	r := newTestReconciler(t, s, fake.NewClientBuilder().WithScheme(s).WithObjects(m).WithStatusSubresource(m).Build())
+	webhookSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "odh-observability-webhook-cert",
+		},
+		Data: map[string][]byte{
+			"tls.crt": []byte("fake-cert"),
+			"tls.key": []byte("fake-key"),
+		},
+	}
+
+	operatorDep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "odh-observability",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "odh-observability"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "odh-observability"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "manager",
+						Image: "controller:latest",
+					}},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(m, webhookSecret, operatorDep).
+		WithStatusSubresource(m).
+		Build()
+
+	r := newTestReconciler(t, s, c)
 
 	_, err := r.reconcile(context.Background(), m)
 	if err != nil {

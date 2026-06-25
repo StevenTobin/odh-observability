@@ -37,9 +37,6 @@ var _ platformcommon.PlatformObject = (*Monitoring)(nil)
 // +kubebuilder:validation:XValidation:rule="has(self.alerting) ? (has(self.metrics) && has(self.metrics.storage)) : true",message="Alerting configuration requires metrics.storage to be configured"
 // +kubebuilder:validation:XValidation:rule="!has(self.collectorReplicas) || (self.collectorReplicas > 0 && ((has(self.metrics) && self.metrics.storage != null) || self.traces != null))",message="CollectorReplicas can only be set when metrics.storage or traces are configured, and must be > 0"
 type MonitoringSpec struct {
-	// ManagementState controls whether the operator actively manages the module (Managed) or removes it (Removed).
-	platformcommon.ManagementSpec `json:",inline"`
-
 	// Namespace is the target namespace where monitoring resources are deployed.
 	// +kubebuilder:default=opendatahub
 	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"

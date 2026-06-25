@@ -141,9 +141,6 @@ func TestMonitoring_DeepCopy(t *testing.T) {
 			Generation: 3,
 		},
 		Spec: MonitoringSpec{
-			ManagementSpec: platformcommon.ManagementSpec{
-				ManagementState: platformcommon.Managed,
-			},
 			Namespace: "opendatahub",
 			Metrics:   &Metrics{Replicas: 2},
 		},
